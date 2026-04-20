@@ -367,46 +367,57 @@
       }).join('');
     })();
 
+    // ── Configuração do Worker ────────────────────────────────
+    const WORKER_URL = 'https://pma-status-checker.mateus-lecchi-y.workers.dev/'; // preencher após deploy
+
     // ── Status ────────────────────────────────────────────────
     let countdownTimer = null;
-    let pollTimer = null;
 
-    function applyStatus(data) {
-      const checkedAt = new Date(data.checked_at);
-      const isStale = (Date.now() - checkedAt.getTime()) > 30 * 60 * 1000;
-      const checkedAtStr = checkedAt.toLocaleString('pt-BR', {
+    async function checkPortal(portal) {
+      const card  = document.getElementById(portal.cardId);
+      const check = document.getElementById(portal.checkId);
+      const badge = card.querySelector('.status-badge');
+
+      card.className = 'status-card checking';
+      badge.textContent = 'Verificando…';
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15000);
+
+      let up = false, http_code = 0, response_time_ms = 0;
+
+      try {
+        const res = await fetch(
+          `${WORKER_URL}?url=${encodeURIComponent(portal.url)}`,
+          { signal: controller.signal, cache: 'no-store' }
+        );
+        const data = await res.json();
+        up = data.ok === true;
+        http_code = data.http_code ?? 0;
+        response_time_ms = data.response_time_ms ?? 0;
+      } catch (_) {
+        up = false;
+      } finally {
+        clearTimeout(timer);
+      }
+
+      card.className = `status-card ${up ? 'online' : 'offline'}`;
+      badge.textContent = up ? 'Online' : 'Offline';
+
+      const now = new Date().toLocaleString('pt-BR', {
         day: '2-digit', month: '2-digit',
         hour: '2-digit', minute: '2-digit', second: '2-digit'
       });
+      check.textContent = `Verificado em: ${now} (HTTP ${http_code}, ${response_time_ms}ms)`;
+    }
 
-      PORTALS.forEach(({ cardId, checkId, url }) => {
-        const card  = document.getElementById(cardId);
-        const check = document.getElementById(checkId);
-        const badge = card.querySelector('.status-badge');
-        const entry = data.portals.find(p => p.url === url);
-
-        if (!entry || !['online', 'offline'].includes(entry.status)) {
-          card.className = 'status-card offline';
-          badge.textContent = 'Desconhecido';
-          check.textContent = 'Dados indisponíveis.';
-          return;
-        }
-
-        const up = entry.status === 'online';
-        card.className = `status-card ${up ? 'online' : 'offline'}`;
-        badge.textContent = up ? 'Online' : 'Offline';
-
-        let info = `Verificado em: ${checkedAtStr} (HTTP ${entry.http_code}, ${entry.response_time_ms}ms)`;
-        if (isStale) info += ' · atenção: dados desatualizados';
-        check.textContent = info;
-      });
-
-      return checkedAt;
+    async function checkAll() {
+      await Promise.all(PORTALS.map(checkPortal));
+      startCountdown(new Date());
     }
 
     function startCountdown(checkedAt) {
       clearInterval(countdownTimer);
-      clearTimeout(pollTimer);
 
       const nextCheckAt = new Date(checkedAt.getTime() + 10 * 60 * 1000);
 
@@ -415,8 +426,8 @@
 
         if (remaining <= 0) {
           clearInterval(countdownTimer);
-          document.getElementById('countdown').textContent = 'Aguardando nova verificação…';
-          pollForUpdate(checkedAt);
+          document.getElementById('countdown').textContent = 'Verificando…';
+          checkAll();
           return;
         }
 
@@ -427,53 +438,8 @@
       }, 1000);
     }
 
-    async function pollForUpdate(previousCheckedAt) {
-      try {
-        const res = await fetch('status.json', { cache: 'no-store' });
-        if (!res.ok) throw new Error();
-        const data = await res.json();
-        if (!Array.isArray(data?.portals) || !data?.checked_at) throw new Error();
-
-        const newCheckedAt = new Date(data.checked_at);
-        if (newCheckedAt > previousCheckedAt) {
-          applyStatus(data);
-          startCountdown(newCheckedAt);
-          return;
-        }
-      } catch (_) {}
-
-      pollTimer = setTimeout(() => pollForUpdate(previousCheckedAt), 30000);
-    }
-
-    async function loadStatus() {
-      PORTALS.forEach(({ cardId }) => {
-        const card = document.getElementById(cardId);
-        card.className = 'status-card checking';
-        card.querySelector('.status-badge').textContent = 'Verificando…';
-      });
-
-      try {
-        const res = await fetch('status.json', { cache: 'no-store' });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        if (!Array.isArray(data?.portals) || !data?.checked_at) throw new Error('Formato inválido');
-
-        const checkedAt = applyStatus(data);
-        startCountdown(checkedAt);
-      } catch (_) {
-        PORTALS.forEach(({ cardId, checkId }) => {
-          const card = document.getElementById(cardId);
-          card.className = 'status-card offline';
-          card.querySelector('.status-badge').textContent = 'Erro';
-          document.getElementById(checkId).textContent = 'Não foi possível obter o status.';
-        });
-        document.getElementById('countdown').textContent = 'Aguardando dados iniciais…';
-        pollTimer = setTimeout(loadStatus, 60000);
-      }
-    }
-
     // ── Inicialização ─────────────────────────────────────────
-    loadStatus();
+    checkAll();
     setTimeout(() => location.reload(), 5 * 60 * 1000);
   </script>
 
