@@ -129,6 +129,12 @@
       font-weight: 600;
       color: var(--text);
       margin-bottom: 3px;
+      text-decoration: none;
+    }
+
+    .portal-name:hover {
+      color: var(--accent);
+      text-decoration: underline;
     }
 
     .status-badge {
@@ -284,7 +290,7 @@
         <div class="status-card checking" id="card-principal">
           <div class="status-dot"></div>
           <div class="status-info">
-            <span class="portal-name">aracruz.es.gov.br</span>
+            <a class="portal-name" href="https://aracruz.es.gov.br" target="_blank" rel="noopener noreferrer">aracruz.es.gov.br</a>
             <span class="status-badge">Verificando…</span>
             <span class="last-check" id="check-principal">—</span>
           </div>
@@ -293,7 +299,7 @@
         <div class="status-card checking" id="card-servidor">
           <div class="status-dot"></div>
           <div class="status-info">
-            <span class="portal-name">servidor.aracruz.es.gov.br</span>
+            <a class="portal-name" href="https://servidor.aracruz.es.gov.br" target="_blank" rel="noopener noreferrer">servidor.aracruz.es.gov.br</a>
             <span class="status-badge">Verificando…</span>
             <span class="last-check" id="check-servidor">—</span>
           </div>
