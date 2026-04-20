@@ -1,0 +1,59 @@
+name: Verificar Status dos Portais
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verificar portais
+        run: |
+          check_url() {
+            local url="$1"
+            local http_code start end duration status
+
+            start=$(date +%s%3N)
+            http_code=$(curl -o /dev/null -s -w "%{http_code}" \
+              --max-time 10 \
+              --connect-timeout 5 \
+              -A "PMA-StatusCheck/1.0" \
+              -L \
+              -- "$url" 2>/dev/null) || true
+            end=$(date +%s%3N)
+            duration=$((end - start))
+
+            # Garantir que http_code é numérico antes de usar em comparação aritmética
+            [[ "$http_code" =~ ^[0-9]+$ ]] || http_code=0
+
+            if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 400 ]; then
+              status="online"
+            else
+              status="offline"
+            fi
+
+            printf '{"url":"%s","status":"%s","http_code":%d,"response_time_ms":%d}' \
+              "$url" "$status" "$http_code" "$duration"
+          }
+
+          r1=$(check_url "https://aracruz.es.gov.br")
+          r2=$(check_url "https://servidor.aracruz.es.gov.br")
+          timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          printf '{"checked_at":"%s","portals":[%s,%s]}\n' \
+            "$timestamp" "$r1" "$r2" > status.json
+
+      - name: Publicar resultado
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add status.json
+          git commit -m "chore: atualizar status dos portais [skip ci]"
+          git push || (git pull --rebase origin main && git push)

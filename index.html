@@ -372,7 +372,7 @@
       { name: 'Meio Ambiente - PMA',                icon: '🎋', url: 'https://aracruz.1doc.com.br/b.php?pg=o/login&n=3' },
     ];
 
-    const REFRESH_INTERVAL = 60; // segundos
+    const FETCH_INTERVAL = 300; // segundos — re-leitura do status.json (Actions roda a cada 10 min)
 
     // ── Render serviços ───────────────────────────────────────
     (function renderServices() {
@@ -392,44 +392,67 @@
       }).join('');
     })();
 
-    // ── Verificação de status ─────────────────────────────────
-    async function checkPortal(portal) {
-      const card  = document.getElementById(portal.cardId);
-      const check = document.getElementById(portal.checkId);
-      const badge = card.querySelector('.status-badge');
-
-      card.className = 'status-card checking';
-      badge.textContent = 'Verificando…';
-
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 12000);
-
-      let up = false;
-      let code = null;
-
-      try {
-        const proxyUrl = `https://api.allorigins.win/head?url=${encodeURIComponent(portal.url)}`;
-        const res  = await fetch(proxyUrl, { signal: controller.signal, cache: 'no-store' });
-        const data = await res.json();
-        code = data?.status?.http_code ?? null;
-        up = code !== null && code >= 200 && code < 400;
-      } catch (_) {
-        up = false;
-      } finally {
-        clearTimeout(timer);
-      }
-
-      card.className = `status-card ${up ? 'online' : 'offline'}`;
-      badge.textContent = up ? 'Online' : 'Offline';
-
-      const now = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      check.textContent = `Última verificação: ${now}${code ? ` (HTTP ${code})` : ''}`;
-    }
-
-    async function checkAll() {
+    // ── Carregamento de status (via status.json gerado pelo GitHub Actions) ──
+    async function loadStatus() {
       const btn = document.getElementById('btn-refresh');
       btn.disabled = true;
-      await Promise.all(PORTALS.map(checkPortal));
+
+      PORTALS.forEach(({ cardId }) => {
+        const card = document.getElementById(cardId);
+        card.className = 'status-card checking';
+        card.querySelector('.status-badge').textContent = 'Verificando…';
+      });
+
+      try {
+        const res = await fetch('status.json', { cache: 'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const data = await res.json();
+
+        if (!Array.isArray(data?.portals) || !data?.checked_at) {
+          throw new Error('Formato inválido');
+        }
+
+        const checkedAt = new Date(data.checked_at);
+        const isStale = (Date.now() - checkedAt.getTime()) > 30 * 60 * 1000;
+
+        const checkedAtStr = checkedAt.toLocaleString('pt-BR', {
+          day: '2-digit', month: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        });
+
+        PORTALS.forEach(({ cardId, checkId, url }) => {
+          const card  = document.getElementById(cardId);
+          const check = document.getElementById(checkId);
+          const badge = card.querySelector('.status-badge');
+
+          const entry = data.portals.find(p => p.url === url);
+
+          if (!entry || !['online', 'offline'].includes(entry.status)) {
+            card.className = 'status-card offline';
+            badge.textContent = 'Desconhecido';
+            check.textContent = 'Dados indisponíveis.';
+            return;
+          }
+
+          const up = entry.status === 'online';
+          card.className = `status-card ${up ? 'online' : 'offline'}`;
+          badge.textContent = up ? 'Online' : 'Offline';
+
+          let info = `Verificado em: ${checkedAtStr} (HTTP ${entry.http_code}, ${entry.response_time_ms}ms)`;
+          if (isStale) info += ' · atenção: dados desatualizados';
+          check.textContent = info;
+        });
+
+      } catch (_) {
+        PORTALS.forEach(({ cardId, checkId }) => {
+          const card = document.getElementById(cardId);
+          card.className = 'status-card offline';
+          card.querySelector('.status-badge').textContent = 'Erro';
+          document.getElementById(checkId).textContent = 'Não foi possível obter o status.';
+        });
+      }
+
       btn.disabled = false;
     }
 
@@ -439,7 +462,7 @@
 
     function startCountdown() {
       clearInterval(countdownTimer);
-      secondsLeft = REFRESH_INTERVAL;
+      secondsLeft = FETCH_INTERVAL;
 
       countdownTimer = setInterval(() => {
         secondsLeft--;
@@ -447,25 +470,25 @@
         if (secondsLeft <= 0) {
           clearInterval(countdownTimer);
           document.getElementById('countdown').textContent = 'Atualizando…';
-          checkAll().then(startCountdown);
+          loadStatus().then(startCountdown);
           return;
         }
 
         const m = Math.floor(secondsLeft / 60);
         const s = String(secondsLeft % 60).padStart(2, '0');
         document.getElementById('countdown').textContent =
-          `Próxima verificação em ${m}:${s}`;
+          `Próxima atualização em ${m}:${s}`;
       }, 1000);
     }
 
     function manualRefresh() {
       clearInterval(countdownTimer);
       document.getElementById('countdown').textContent = 'Atualizando…';
-      checkAll().then(startCountdown);
+      loadStatus().then(startCountdown);
     }
 
     // ── Inicialização ─────────────────────────────────────────
-    checkAll().then(startCountdown);
+    loadStatus().then(startCountdown);
   </script>
 
 </body>
