@@ -55,6 +55,10 @@ async function handleScheduled() {
 async function handleFetch(request) {
   const origin = request.headers.get('Origin') ?? '';
 
+  if (!ALLOWED_ORIGINS.has(origin)) {
+    return new Response('Forbidden', { status: 403 });
+  }
+
   if (request.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: corsHeaders(origin) });
   }
