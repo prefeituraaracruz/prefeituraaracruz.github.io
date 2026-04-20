@@ -154,33 +154,13 @@
 
     /* ── REFRESH BAR ─────────────────────────────── */
     .refresh-bar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
       margin-top: 14px;
-      flex-wrap: wrap;
     }
 
     .countdown-text {
       font-size: .82rem;
       color: var(--text-muted);
     }
-
-    .btn-refresh {
-      background: none;
-      border: 1.5px solid var(--accent);
-      color: var(--accent);
-      font-size: .82rem;
-      font-weight: 600;
-      padding: 6px 16px;
-      border-radius: 8px;
-      cursor: pointer;
-      transition: background .15s, color .15s;
-    }
-
-    .btn-refresh:hover { background: var(--accent); color: #fff; }
-    .btn-refresh:disabled { opacity: .5; cursor: not-allowed; }
 
     /* ── SERVICES GRID ───────────────────────────── */
     .services-grid {
@@ -323,9 +303,6 @@
 
       <div class="refresh-bar">
         <span class="countdown-text" id="countdown">Verificando…</span>
-        <button class="btn-refresh" id="btn-refresh" onclick="manualRefresh()">
-          Verificar agora
-        </button>
       </div>
     </section>
 
@@ -372,8 +349,6 @@
       { name: 'Meio Ambiente - PMA',                icon: '🎋', url: 'https://aracruz.1doc.com.br/b.php?pg=o/login&n=3' },
     ];
 
-    const FETCH_INTERVAL = 300; // segundos — re-leitura do status.json (Actions roda a cada 10 min)
-
     // ── Render serviços ───────────────────────────────────────
     (function renderServices() {
       const grid = document.getElementById('services-grid');
@@ -392,11 +367,85 @@
       }).join('');
     })();
 
-    // ── Carregamento de status (via status.json gerado pelo GitHub Actions) ──
-    async function loadStatus() {
-      const btn = document.getElementById('btn-refresh');
-      btn.disabled = true;
+    // ── Status ────────────────────────────────────────────────
+    let countdownTimer = null;
+    let pollTimer = null;
 
+    function applyStatus(data) {
+      const checkedAt = new Date(data.checked_at);
+      const isStale = (Date.now() - checkedAt.getTime()) > 30 * 60 * 1000;
+      const checkedAtStr = checkedAt.toLocaleString('pt-BR', {
+        day: '2-digit', month: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      });
+
+      PORTALS.forEach(({ cardId, checkId, url }) => {
+        const card  = document.getElementById(cardId);
+        const check = document.getElementById(checkId);
+        const badge = card.querySelector('.status-badge');
+        const entry = data.portals.find(p => p.url === url);
+
+        if (!entry || !['online', 'offline'].includes(entry.status)) {
+          card.className = 'status-card offline';
+          badge.textContent = 'Desconhecido';
+          check.textContent = 'Dados indisponíveis.';
+          return;
+        }
+
+        const up = entry.status === 'online';
+        card.className = `status-card ${up ? 'online' : 'offline'}`;
+        badge.textContent = up ? 'Online' : 'Offline';
+
+        let info = `Verificado em: ${checkedAtStr} (HTTP ${entry.http_code}, ${entry.response_time_ms}ms)`;
+        if (isStale) info += ' · atenção: dados desatualizados';
+        check.textContent = info;
+      });
+
+      return checkedAt;
+    }
+
+    function startCountdown(checkedAt) {
+      clearInterval(countdownTimer);
+      clearTimeout(pollTimer);
+
+      const nextCheckAt = new Date(checkedAt.getTime() + 10 * 60 * 1000);
+
+      countdownTimer = setInterval(() => {
+        const remaining = Math.max(0, Math.floor((nextCheckAt - Date.now()) / 1000));
+
+        if (remaining <= 0) {
+          clearInterval(countdownTimer);
+          document.getElementById('countdown').textContent = 'Aguardando nova verificação…';
+          pollForUpdate(checkedAt);
+          return;
+        }
+
+        const m = Math.floor(remaining / 60);
+        const s = String(remaining % 60).padStart(2, '0');
+        document.getElementById('countdown').textContent =
+          `Próxima verificação em ${m}:${s}`;
+      }, 1000);
+    }
+
+    async function pollForUpdate(previousCheckedAt) {
+      try {
+        const res = await fetch('status.json', { cache: 'no-store' });
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        if (!Array.isArray(data?.portals) || !data?.checked_at) throw new Error();
+
+        const newCheckedAt = new Date(data.checked_at);
+        if (newCheckedAt > previousCheckedAt) {
+          applyStatus(data);
+          startCountdown(newCheckedAt);
+          return;
+        }
+      } catch (_) {}
+
+      pollTimer = setTimeout(() => pollForUpdate(previousCheckedAt), 30000);
+    }
+
+    async function loadStatus() {
       PORTALS.forEach(({ cardId }) => {
         const card = document.getElementById(cardId);
         card.className = 'status-card checking';
@@ -406,44 +455,11 @@
       try {
         const res = await fetch('status.json', { cache: 'no-store' });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
         const data = await res.json();
+        if (!Array.isArray(data?.portals) || !data?.checked_at) throw new Error('Formato inválido');
 
-        if (!Array.isArray(data?.portals) || !data?.checked_at) {
-          throw new Error('Formato inválido');
-        }
-
-        const checkedAt = new Date(data.checked_at);
-        const isStale = (Date.now() - checkedAt.getTime()) > 30 * 60 * 1000;
-
-        const checkedAtStr = checkedAt.toLocaleString('pt-BR', {
-          day: '2-digit', month: '2-digit',
-          hour: '2-digit', minute: '2-digit', second: '2-digit'
-        });
-
-        PORTALS.forEach(({ cardId, checkId, url }) => {
-          const card  = document.getElementById(cardId);
-          const check = document.getElementById(checkId);
-          const badge = card.querySelector('.status-badge');
-
-          const entry = data.portals.find(p => p.url === url);
-
-          if (!entry || !['online', 'offline'].includes(entry.status)) {
-            card.className = 'status-card offline';
-            badge.textContent = 'Desconhecido';
-            check.textContent = 'Dados indisponíveis.';
-            return;
-          }
-
-          const up = entry.status === 'online';
-          card.className = `status-card ${up ? 'online' : 'offline'}`;
-          badge.textContent = up ? 'Online' : 'Offline';
-
-          let info = `Verificado em: ${checkedAtStr} (HTTP ${entry.http_code}, ${entry.response_time_ms}ms)`;
-          if (isStale) info += ' · atenção: dados desatualizados';
-          check.textContent = info;
-        });
-
+        const checkedAt = applyStatus(data);
+        startCountdown(checkedAt);
       } catch (_) {
         PORTALS.forEach(({ cardId, checkId }) => {
           const card = document.getElementById(cardId);
@@ -451,44 +467,13 @@
           card.querySelector('.status-badge').textContent = 'Erro';
           document.getElementById(checkId).textContent = 'Não foi possível obter o status.';
         });
+        document.getElementById('countdown').textContent = 'Aguardando dados iniciais…';
+        pollTimer = setTimeout(loadStatus, 60000);
       }
-
-      btn.disabled = false;
-    }
-
-    // ── Countdown ─────────────────────────────────────────────
-    let secondsLeft = 0;
-    let countdownTimer = null;
-
-    function startCountdown() {
-      clearInterval(countdownTimer);
-      secondsLeft = FETCH_INTERVAL;
-
-      countdownTimer = setInterval(() => {
-        secondsLeft--;
-
-        if (secondsLeft <= 0) {
-          clearInterval(countdownTimer);
-          document.getElementById('countdown').textContent = 'Atualizando…';
-          loadStatus().then(startCountdown);
-          return;
-        }
-
-        const m = Math.floor(secondsLeft / 60);
-        const s = String(secondsLeft % 60).padStart(2, '0');
-        document.getElementById('countdown').textContent =
-          `Próxima atualização em ${m}:${s}`;
-      }, 1000);
-    }
-
-    function manualRefresh() {
-      clearInterval(countdownTimer);
-      document.getElementById('countdown').textContent = 'Atualizando…';
-      loadStatus().then(startCountdown);
     }
 
     // ── Inicialização ─────────────────────────────────────────
-    loadStatus().then(startCountdown);
+    loadStatus();
   </script>
 
 </body>
